@@ -24,6 +24,12 @@ from shark.shark_inference import SharkInference
 from pathlib import Path
 
 
+model_path = "stabilityai/stablelm-tuned-alpha-3b"
+tok = AutoTokenizer.from_pretrained(model_path)
+tok.add_special_tokens({"pad_token": "<PAD>"})
+print(f"Sucessfully loaded the tokenizer to the memory")
+
+
 class StopOnTokens(StoppingCriteria):
     def __call__(
         self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs
@@ -240,18 +246,15 @@ system_prompt = """<|SYSTEM|># StableLM Tuned (Alpha version)
 """
 
 
-def get_tokenizer():
-    model_path = "stabilityai/stablelm-tuned-alpha-3b"
-    tok = AutoTokenizer.from_pretrained(model_path)
-    tok.add_special_tokens({"pad_token": "<PAD>"})
-    print(f"Sucessfully loaded the tokenizer to the memory")
-    return tok
+input_ids = torch.randint(3, (1, 256))
+attention_mask = torch.randint(3, (1, 256))
+sharkModel = 0
 
 
 # sharkStableLM = compile_stableLM(None, tuple([input_ids, attention_mask]), "stableLM_linalg_f32_seqLen256", "/home/shark/vivek/stableLM_shark_f32_seqLen256")
 def generate(
     new_text,
-    # streamer,
+    streamer,
     max_new_tokens,
     do_sample,
     top_p,
@@ -260,12 +263,7 @@ def generate(
     num_beams,
     stopping_criteria,
     sharkStableLM,
-    tok=None,
-    input_ids=torch.randint(3, (1, 256)),
-    attention_mask=torch.randint(3, (1, 256)),
 ):
-    if tok == None:
-        tok = get_tokenizer()
     # Construct the input message string for the model by concatenating the current system message and conversation history
     # Tokenize the messages string
     # sharkStableLM = compile_stableLM(None, tuple([input_ids, attention_mask]), "stableLM_linalg_f32_seqLen256", "/home/shark/vivek/stableLM_shark_f32_seqLen256")

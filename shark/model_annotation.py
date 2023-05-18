@@ -30,7 +30,6 @@ import os
 import sys
 from typing import Dict, List
 
-import iree.compiler._mlir_libs
 from iree.compiler import ir
 
 

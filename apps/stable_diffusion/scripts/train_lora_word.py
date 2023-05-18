@@ -75,6 +75,9 @@ from apps.stable_diffusion.src import (
 )
 from apps.stable_diffusion.src.utils import update_lora_weight
 
+global_idx = 0
+indexcall = 0
+
 
 # Setup the dataset
 class LoraDataset(Dataset):
@@ -170,7 +173,7 @@ def torch_device(device):
     if device_type_tokens[0] == "metal":
         device_type_tokens[0] = "vulkan"
     if len(device_type_tokens) > 1:
-        return device_type_tokens[0] + ":" + device_type_tokens[1]
+        return device_type_tokens[0] + "://" + device_type_tokens[1]
     else:
         return device_type_tokens[0]
 
@@ -261,9 +264,9 @@ def lora_train(
     freeze_params(text_encoder.parameters())
 
     # Move vae and unet to device
-    vae.to(args.device)
-    unet.to(args.device)
-    text_encoder.to(args.device)
+    # vae.to(args.device)
+    # unet.to(args.device)
+    # text_encoder.to(args.device)
 
     if use_lora != "":
         update_lora_weight(unet, args.use_lora, "unet")
@@ -465,6 +468,15 @@ def lora_train(
             fx_graph, example_inputs, output_type="linalg-on-tensors"
         )
 
+        from contextlib import redirect_stdout
+        global global_idx
+        linalg_mlir_name = f"linalg_gen_{global_idx}.mlir"
+        with open(linalg_mlir_name, 'w') as f:
+            with redirect_stdout(f):
+                print(mlir_module)
+        print("saving!")
+        global_idx += 1
+
         bytecode_stream = BytesIO()
         mlir_module.operation.write_bytecode(bytecode_stream)
         bytecode = bytecode_stream.getvalue()
@@ -475,8 +487,17 @@ def lora_train(
         shark_module.compile()
 
         def compiled_callable(*inputs):
+            print("In callable")
+            global indexcall
+            print(f"\n\n THIS ONE BREAKS: {indexcall} \n\n")
             inputs = [x.numpy() for x in inputs]
+            if (indexcall == 42):
+                #import pdb; pdb.set_trace()
+                for iter, input in enumerate(inputs):
+                    np.save(f"input{iter}.npy", input)
+            indexcall += 1;
             result = shark_module("forward", inputs)
+            print("\n After Result \n")
             if was_unwrapped:
                 result = [
                     result,
@@ -489,12 +510,17 @@ def lora_train(
                 for removed_index in removed_none_indexes:
                     result.insert(removed_index, None)
                 result = tuple(result)
+            print(f"{result}")
             return result
 
         return compiled_callable
 
     def predictions(torch_func, jit_func, batchA, batchB):
-        res = jit_func(batchA.numpy(), batchB.numpy())
+
+        import pdb; pdb.set_trace()
+
+        res = jit_func(batchA, batchB)
+        print(" After jit_func ")
         if res is not None:
             # prediction = torch.from_numpy(res)
             prediction = res
@@ -622,21 +648,32 @@ def lora_train(
             i for i in text_encoder.get_input_embeddings().parameters()
         ]
 
+        #import pdb; pdb.set_trace()
+
+        unet.train()
+
+        print("\n Before Optimize \n")
+        dynamo_callable = dynamo.optimize(
+            refbackend_torchdynamo_backend
+        )(train_func)
+
+        lam_func = lambda x, y: dynamo_callable(
+                 x, y
+              )
+        print("\n After optimize \n")
+
         for epoch in range(num_train_epochs):
-            unet.train()
             for step, batch in enumerate(train_dataloader):
-                dynamo_callable = dynamo.optimize(
-                    refbackend_torchdynamo_backend
-                )(train_func)
-                lam_func = lambda x, y: dynamo_callable(
-                    torch.from_numpy(x), torch.from_numpy(y)
-                )
+                print(f"Batch: {batch['pixel_values']} ")
+                print(f"Input: {batch['input_ids']} \n")
+                print(f"{dynamo_callable}")
                 loss = predictions(
                     train_func,
                     lam_func,
                     batch["pixel_values"],
                     batch["input_ids"],
                 )
+                print("\n After prediction \n")
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 progress_bar.update(1)

@@ -5,7 +5,8 @@ from apps.language_models.scripts.stablelm import (
     compile_stableLM,
     StopOnTokens,
     generate,
-    get_tokenizer,
+    sharkModel,
+    tok,
     StableLMModel,
 )
 from transformers import (
@@ -33,81 +34,17 @@ attention_mask = torch.randint(3, (1, 256))
 
 
 sharkModel = 0
-sharded_model = 0
 
 
-start_message_vicuna = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.\n"
-past_key_values = None
-
-
-def chat(curr_system_message, history, model):
-    global sharded_model
-    global past_key_values
-    if "vicuna" in model:
-        from apps.language_models.scripts.sharded_vicuna_fp32 import (
-            tokenizer,
-            get_sharded_model,
-        )
-
-        SAMPLE_INPUT_LEN = 137
-        curr_system_message = start_message_vicuna
-        if sharded_model == 0:
-            sharded_model = get_sharded_model()
-        messages = curr_system_message + "".join(
-            [
-                "".join(["<|USER|>" + item[0], "<|ASSISTANT|>" + item[1]])
-                for item in history
-            ]
-        )
-        prompt = messages.strip()
-        print("prompt = ", prompt)
-        input_ids = tokenizer(prompt).input_ids
-        new_sentence = ""
-        for _ in range(200):
-            original_input_ids = input_ids
-            input_id_len = len(input_ids)
-            pad_len = SAMPLE_INPUT_LEN - input_id_len
-            attention_mask = torch.ones([1, input_id_len], dtype=torch.int64)
-            input_ids = torch.tensor(input_ids)
-            input_ids = input_ids.reshape([1, input_id_len])
-            attention_mask = torch.nn.functional.pad(
-                torch.tensor(attention_mask),
-                (0, pad_len),
-                mode="constant",
-                value=0,
-            )
-
-            if _ == 0:
-                output = sharded_model.forward(input_ids, is_first=True)
-            else:
-                output = sharded_model.forward(
-                    input_ids, past_key_values=past_key_values, is_first=False
-                )
-            logits = output["logits"]
-            past_key_values = output["past_key_values"]
-            new_word = tokenizer.decode(torch.argmax(logits[:, -1, :], dim=1))
-            if new_word == "</s>":
-                break
-            new_sentence += " " + new_word
-            history[-1][1] = new_sentence
-            yield history
-            next_token = torch.argmax(logits[:, input_id_len - 1, :], dim=1)
-            original_input_ids.append(next_token)
-            input_ids = [next_token]
-        print(new_sentence)
-        return history
-
+def chat(curr_system_message, history):
     global sharkModel
     print("In chat")
     if sharkModel == 0:
-        tok = get_tokenizer()
         # sharkModel = compile_stableLM(None, tuple([input_ids, attention_mask]), "stableLM_linalg_f32_seqLen256", "/home/shark/disk/phaneesh/stablelm_3b_f32_cuda_2048_newflags.vmfb")
         m = AutoModelForCausalLM.from_pretrained(
             "stabilityai/stablelm-tuned-alpha-3b", torch_dtype=torch.float32
         )
         stableLMModel = StableLMModel(m)
-        input_ids = torch.randint(3, (1, 256))
-        attention_mask = torch.randint(3, (1, 256))
         sharkModel = compile_stableLM(
             stableLMModel,
             tuple([input_ids, attention_mask]),
@@ -128,12 +65,12 @@ def chat(curr_system_message, history, model):
     )
     # print(messages)
     # Tokenize the messages string
-    # streamer = TextIteratorStreamer(
-    #     tok, timeout=10.0, skip_prompt=True, skip_special_tokens=True
-    # )
+    streamer = TextIteratorStreamer(
+        tok, timeout=10.0, skip_prompt=True, skip_special_tokens=True
+    )
     generate_kwargs = dict(
         new_text=messages,
-        # streamer=streamer,
+        streamer=streamer,
         max_new_tokens=512,
         do_sample=True,
         top_p=0.95,
@@ -158,15 +95,12 @@ with gr.Blocks(title="Chatbot") as stablelm_chat:
     with gr.Row():
         model = gr.Dropdown(
             label="Select Model",
-            value="TheBloke/vicuna-7B-1.1-HF",
-            choices=[
-                "stabilityai/stablelm-tuned-alpha-3b",
-                "TheBloke/vicuna-7B-1.1-HF",
-            ],
+            value="stabilityai/stablelm-tuned-alpha-3b",
+            choices=["stabilityai/stablelm-tuned-alpha-3b"],
         )
         device_value = None
         for d in available_devices:
-            if "vulkan" in d:
+            if "cuda" in d:
                 device_value = d
                 break
 
@@ -196,18 +130,12 @@ with gr.Blocks(title="Chatbot") as stablelm_chat:
     submit_event = msg.submit(
         fn=user, inputs=[msg, chatbot], outputs=[msg, chatbot], queue=False
     ).then(
-        fn=chat,
-        inputs=[system_msg, chatbot, model],
-        outputs=[chatbot],
-        queue=True,
+        fn=chat, inputs=[system_msg, chatbot], outputs=[chatbot], queue=True
     )
     submit_click_event = submit.click(
         fn=user, inputs=[msg, chatbot], outputs=[msg, chatbot], queue=False
     ).then(
-        fn=chat,
-        inputs=[system_msg, chatbot, model],
-        outputs=[chatbot],
-        queue=True,
+        fn=chat, inputs=[system_msg, chatbot], outputs=[chatbot], queue=True
     )
     stop.click(
         fn=None,

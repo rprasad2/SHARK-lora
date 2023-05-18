@@ -23,7 +23,6 @@ import re
 
 # Get the iree-compile arguments given device.
 def get_iree_device_args(device, extra_args=[]):
-    print("Configuring for device:" + device)
     device_uri = device.split("://")
     if len(device_uri) > 1:
         if device_uri[0] not in ["vulkan"]:
@@ -31,9 +30,6 @@ def get_iree_device_args(device, extra_args=[]):
                 f"Specific device selection only supported for vulkan now."
                 f"Proceeding with {device} as device."
             )
-        device_num = device_uri[1]
-    else:
-        device_num = 0
 
     if device_uri[0] == "cpu":
         from shark.iree_utils.cpu_utils import get_iree_cpu_args
@@ -46,9 +42,7 @@ def get_iree_device_args(device, extra_args=[]):
     if device_uri[0] in ["metal", "vulkan"]:
         from shark.iree_utils.vulkan_utils import get_iree_vulkan_args
 
-        return get_iree_vulkan_args(
-            device_num=device_num, extra_args=extra_args
-        )
+        return get_iree_vulkan_args(extra_args=extra_args)
     if device_uri[0] == "rocm":
         from shark.iree_utils.gpu_utils import get_iree_rocm_args
 
@@ -263,6 +257,11 @@ def compile_module_to_flatbuffer(
     args += get_iree_common_args()
     args += get_model_specific_args()
     args += extra_args
+
+    print("\nArguments:")
+    for argu in args:
+        print(f"{argu}")
+    print("\n")
 
     if frontend in ["tensorflow", "tf"]:
         input_type = "mhlo"
