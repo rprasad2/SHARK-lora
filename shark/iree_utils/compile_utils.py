@@ -258,10 +258,10 @@ def compile_module_to_flatbuffer(
     args += get_model_specific_args()
     args += extra_args
 
-    print("\nArguments:")
-    for argu in args:
-        print(f"{argu}")
-    print("\n")
+    # print("\nArguments:")
+    # for argu in args:
+    #     print(f"{argu}")
+    # print("\n")
 
     if frontend in ["tensorflow", "tf"]:
         input_type = "mhlo"

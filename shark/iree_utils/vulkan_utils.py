@@ -31,8 +31,8 @@ def get_vulkan_device_name():
         print("Following devices found:")
         for i, dname in enumerate(vulkaninfo_list):
             print(f"{i}. {dname}")
-        print(f"* FIX LATER * \nChoosing first one: {vulkaninfo_list[1]}")
-    return vulkaninfo_list[1]
+        print(f"* FIX LATER * \nChoosing first one: {vulkaninfo_list[0]}")
+    return vulkaninfo_list[0]
 
 
 def get_os_name():
@@ -122,7 +122,7 @@ def get_vulkan_target_triple(device_name):
 def get_vulkan_triple_flag(device_name="", extra_args=[]):
     for flag in extra_args:
         if "-iree-vulkan-target-triple=" in flag:
-            print(f"Using target triple {flag.split('=')[1]}")
+            # print(f"Using target triple {flag.split('=')[1]}")
             return None
 
     if device_name == "" or device_name == [] or device_name is None:
@@ -131,16 +131,16 @@ def get_vulkan_triple_flag(device_name="", extra_args=[]):
         vulkan_device = device_name
     triple = get_vulkan_target_triple(vulkan_device)
     if triple is not None:
-        print(
-            f"Found vulkan device {vulkan_device}.\nUsing target triple {triple}"
-        )
+        # print(
+        #     f"Found vulkan device {vulkan_device}.\nUsing target triple {triple}"
+        # )
         return f"-iree-vulkan-target-triple={triple}"
     print(
         """Optimized kernel for your target device is not added yet.
         Contact SHARK Admin on discord[https://discord.com/invite/RUqY2h2s9u]
         or pull up an issue."""
     )
-    print(f"Target : {vulkan_device}")
+    # print(f"Target : {vulkan_device}")
     return None
 
 
@@ -151,7 +151,7 @@ def get_iree_vulkan_args(extra_args=[]):
     vulkan_triple_flag = None
     for arg in extra_args:
         if "-iree-vulkan-target-triple=" in arg:
-            print(f"Using target triple {arg} from command line args")
+            # print(f"Using target triple {arg} from command line args")
             vulkan_triple_flag = arg
             break
 

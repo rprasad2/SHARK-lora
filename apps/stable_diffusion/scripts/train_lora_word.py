@@ -469,13 +469,10 @@ def lora_train(
         )
 
         from contextlib import redirect_stdout
-        global global_idx
-        linalg_mlir_name = f"linalg_gen_{global_idx}.mlir"
-        with open(linalg_mlir_name, 'w') as f:
-            with redirect_stdout(f):
-                print(mlir_module)
-        print("saving!")
-        global_idx += 1
+        # global global_idx
+        # print("saving!")
+        # print(f"THIS IS THE MODULE: {global_idx}")
+        # global_idx += 1
 
         bytecode_stream = BytesIO()
         mlir_module.operation.write_bytecode(bytecode_stream)
@@ -487,30 +484,38 @@ def lora_train(
         shark_module.compile()
 
         def compiled_callable(*inputs):
-            print("In callable")
+            # print("In callable")
             global indexcall
-            print(f"\n\n THIS ONE BREAKS: {indexcall} \n\n")
+            # print(f"\n\n THIS ONE BREAKS: {indexcall} \n\n")
             inputs = [x.numpy() for x in inputs]
-            if (indexcall == 42):
-                #import pdb; pdb.set_trace()
-                for iter, input in enumerate(inputs):
-                    np.save(f"input{iter}.npy", input)
             indexcall += 1;
             result = shark_module("forward", inputs)
-            print("\n After Result \n")
+
+            # print("\n After Result \n")
             if was_unwrapped:
                 result = [
                     result,
                 ]
             if not isinstance(result, list):
                 result = torch.from_numpy(result)
+                # if (result.isnan().any() == True):
+                #     import pdb; pdb.set_trace()
             else:
+                # for x in result:
+                    # if (torch.from_numpy(x).isnan().any() == True):
+                    #     for iter, input in enumerate(inputs):
+                    #         np.save(f"input{iter}.npy", input)
+                    #     linalg_mlir_name = f"linalg_gen_{global_idx}.mlir"
+                    #     with open(linalg_mlir_name, 'w') as f:
+                    #         with redirect_stdout(f):
+                    #             print(mlir_module)
+                    #     import sys; sys.exit() 
                 result = tuple(torch.from_numpy(x) for x in result)
                 result = list(result)
                 for removed_index in removed_none_indexes:
                     result.insert(removed_index, None)
                 result = tuple(result)
-            print(f"{result}")
+                
             return result
 
         return compiled_callable
@@ -652,28 +657,25 @@ def lora_train(
 
         unet.train()
 
-        print("\n Before Optimize \n")
+        # print("\n Before Optimize \n")
         dynamo_callable = dynamo.optimize(
             refbackend_torchdynamo_backend
         )(train_func)
 
-        lam_func = lambda x, y: dynamo_callable(
-                 x, y
-              )
-        print("\n After optimize \n")
+        # lam_func = lambda x, y: dynamo_callable(
+        #          x, y
+        #       )
+        # print("\n After optimize \n")
 
         for epoch in range(num_train_epochs):
             for step, batch in enumerate(train_dataloader):
-                print(f"Batch: {batch['pixel_values']} ")
-                print(f"Input: {batch['input_ids']} \n")
-                print(f"{dynamo_callable}")
                 loss = predictions(
                     train_func,
-                    lam_func,
+                    dynamo_callable,
                     batch["pixel_values"],
                     batch["input_ids"],
                 )
-                print("\n After prediction \n")
+                # print("\n After prediction \n")
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 progress_bar.update(1)
