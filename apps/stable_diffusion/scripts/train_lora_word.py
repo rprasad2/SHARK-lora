@@ -44,24 +44,9 @@ from torch_mlir_e2e_test.linalg_on_tensors_backends import refbackend
 from shark.shark_inference import SharkInference
 
 torch._dynamo.config.verbose = True
-
-from diffusers import (
-    AutoencoderKL,
-    DDPMScheduler,
-    PNDMScheduler,
-    StableDiffusionPipeline,
-    UNet2DConditionModel,
-)
 from diffusers.optimization import get_scheduler
 from diffusers.pipelines.stable_diffusion import (
     StableDiffusionSafetyChecker,
-)
-from PIL import Image
-from tqdm.auto import tqdm
-from transformers import (
-    CLIPFeatureExtractor,
-    CLIPTextModel,
-    CLIPTokenizer,
 )
 
 from io import BytesIO
