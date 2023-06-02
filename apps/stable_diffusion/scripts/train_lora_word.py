@@ -13,6 +13,7 @@ import os
 from typing import List
 import random
 import torch_mlir
+import importlib.util
 
 import numpy as np
 import torch
@@ -35,6 +36,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
 from diffusers.loaders import AttnProcsLayers
 from diffusers.models.cross_attention import LoRACrossAttnProcessor
+from diffusers.utils.import_utils import is_wandb_available
 
 import torch_mlir
 from torch_mlir.dynamo import make_simple_dynamo_backend
@@ -182,7 +184,15 @@ def lora_train(
     training_images_dir: str,
     lora_save_dir: str,
     use_lora: str,
+    # report_to: str,
 ):
+    # if args.report_to == "wandb":
+    #     if not is_wandb_available():
+    #         ImportError("Make sure to install wandb if you want to use it for logging during training.")
+    #     import wandb
+    
+
+    
     from apps.stable_diffusion.web.ui.utils import (
         get_custom_model_pathfile,
         Config,
@@ -280,9 +290,10 @@ def lora_train(
             )
 
         unet.set_attn_processor(lora_attn_procs)
+    # WHERE DIFFUSERS BECOMES FAST ( using xformers )
     lora_layers = AttnProcsLayers(unet.attn_processors)
-
-    class VaeModel(torch.nn.Module):
+    # Diffusers fast training w ampere
+    class VaeModelEncode(torch.nn.Module):
         def __init__(self):
             super().__init__()
             self.vae = vae
@@ -290,6 +301,21 @@ def lora_train(
         def forward(self, input):
             x = self.vae.encode(input, return_dict=False)[0]
             return x
+        
+    class VaeModelDecode(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.vae = None
+
+        def forward(self, input):
+            if not self.base_vae:
+                input = 1 / 0.18215 * input
+            x = self.vae.decode(input, return_dict=False)[0]
+            x = (x / 2 + 0.5).clamp(0, 1)
+            if self.base_vae:
+                return x
+            x = x * 255.0
+            return x.round()
 
     class UnetModel(torch.nn.Module):
         def __init__(self):
@@ -299,7 +325,7 @@ def lora_train(
         def forward(self, x, y, z):
             return self.unet.forward(x, y, z, return_dict=False)[0]
 
-    shark_vae = VaeModel()
+    shark_vae = VaeModelEncode()
     shark_unet = UnetModel()
 
     ####### Creating our training data ########
@@ -591,6 +617,80 @@ def lora_train(
         optimizer.zero_grad()
 
         return loss
+    
+    def compute_snr(timesteps):
+        """
+        Computes SNR as per https://github.com/TiankaiHang/Min-SNR-Diffusion-Training/blob/521b624bd70c67cee4bdf49225915f5945a872e3/guided_diffusion/gaussian_diffusion.py#L847-L849
+        """
+        alphas_cumprod = noise_scheduler.alphas_cumprod
+        sqrt_alphas_cumprod = alphas_cumprod**0.5
+        sqrt_one_minus_alphas_cumprod = (1.0 - alphas_cumprod) ** 0.5
+
+        # Expand the tensors.
+        # Adapted from https://github.com/TiankaiHang/Min-SNR-Diffusion-Training/blob/521b624bd70c67cee4bdf49225915f5945a872e3/guided_diffusion/gaussian_diffusion.py#L1026
+        sqrt_alphas_cumprod = sqrt_alphas_cumprod.to(device=timesteps.device)[timesteps].float()
+        while len(sqrt_alphas_cumprod.shape) < len(timesteps.shape):
+            sqrt_alphas_cumprod = sqrt_alphas_cumprod[..., None]
+        alpha = sqrt_alphas_cumprod.expand(timesteps.shape)
+
+        sqrt_one_minus_alphas_cumprod = sqrt_one_minus_alphas_cumprod.to(device=timesteps.device)[timesteps].float()
+        while len(sqrt_one_minus_alphas_cumprod.shape) < len(timesteps.shape):
+            sqrt_one_minus_alphas_cumprod = sqrt_one_minus_alphas_cumprod[..., None]
+        sigma = sqrt_one_minus_alphas_cumprod.expand(timesteps.shape)
+
+        # Compute SNR.
+        snr = (alpha / sigma) ** 2
+        return snr
+    
+    def diffusers_loss(batch, ):
+        # Convert images to latent space
+                latents = vae.encode(batch["pixel_values"].to(dtype=torch.float32)).latent_dist.sample()
+                latents = latents * 0.18215
+
+                # Sample noise that we'll add to the latents
+                noise = torch.randn_like(latents)
+            
+
+                bsz = latents.shape[0]
+                # Sample a random timestep for each image
+                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
+                timesteps = timesteps.long()
+
+                # Add noise to the latents according to the noise magnitude at each timestep
+                # (this is the forward diffusion process)
+                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+
+                # Get the text embedding for conditioning
+                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+
+                # Get the target for loss depending on the prediction type
+                if noise_scheduler.config.prediction_type == "epsilon":
+                    target = noise
+                elif noise_scheduler.config.prediction_type == "v_prediction":
+                    target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                else:
+                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+
+                # Predict the noise residual and compute loss
+                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+
+                # if args.snr_gamma is None:
+                # loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                # else:
+                # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+                # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+                # This is discussed in Section 4.2 of the same paper.
+                snr = compute_snr(timesteps)
+                mse_loss_weights = (
+                    torch.stack([snr, 5.0 * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
+                )
+                # We first calculate the original loss. Then we mean over the non-batch dimensions and
+                # rebalance the sample-wise losses with their respective loss weights.
+                # Finally, we take the mean of the rebalanced loss.
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
+                loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
+                loss = loss.mean()
+                return loss
 
     def training_function():
         max_train_steps = hyperparameters["max_train_steps"]
@@ -647,20 +747,23 @@ def lora_train(
             refbackend_torchdynamo_backend
         )(train_func)
 
-        # lam_func = lambda x, y: dynamo_callable(
-        #          x, y
-        #       )
-        # print("\n After optimize \n")
+        lam_func = lambda x, y: dynamo_callable(
+                 x, y
+              )
+        print("\n After optimize \n")
+
+       # import pdb; pdb.set_trace()
 
         for epoch in range(num_train_epochs):
             for step, batch in enumerate(train_dataloader):
                 loss = predictions(
                     train_func,
-                    dynamo_callable,
+                    lam_func,
                     batch["pixel_values"],
                     batch["input_ids"],
                 )
-                # print("\n After prediction \n")
+                # loss = diffusers_loss(batch)
+                print(f"Loss: {loss}")
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 progress_bar.update(1)
@@ -671,6 +774,16 @@ def lora_train(
 
                 if global_step >= max_train_steps:
                     break
+            # if True:
+            #     if args.prompt is not None and epoch % args.max_train_steps == 0: 
+            #         logger.info(
+            #             f"Running validation... \n Generating images with prompt:"
+            #             f" {args.prompt}."
+            #         )
+            #         vaeDecode = VaeModelDecode()
+        print(f"Final Loss: {loss}")
+                
+            
 
     training_function()
 
@@ -713,4 +826,5 @@ if __name__ == "__main__":
         args.training_images_dir,
         args.lora_save_dir,
         args.use_lora,
+        # args.report_to,
     )

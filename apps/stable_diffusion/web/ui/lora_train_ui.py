@@ -70,6 +70,13 @@ with gr.Blocks(title="Lora Training") as lora_train_web:
                         lines=1,
                         elem_id="prompt_box",
                     )
+                # with gr.Group(elem_id="image_dir_box_outer"):
+                #     report_to = gr.Textbox(
+                #         label="Results",
+                #         value=args.report_to,
+                #         lines=1,
+                #         elem_id="prompt_box",
+                #     )
                 with gr.Group(elem_id="prompt_box_outer"):
                     prompt = gr.Textbox(
                         label="Prompt",
@@ -209,6 +216,7 @@ with gr.Blocks(title="Lora Training") as lora_train_web:
                 device,
                 max_length,
                 training_images_dir,
+                # report_to,
                 output_loc,
                 get_custom_vae_or_lora_weights(
                     lora_weights, lora_hf_id, "lora"
