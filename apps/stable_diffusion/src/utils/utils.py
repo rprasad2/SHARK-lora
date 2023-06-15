@@ -83,7 +83,6 @@ def get_shark_model(tank_url, model_name, extra_args=[]):
 
     # Set local shark_tank cache directory.
     shark_args.local_tank_cache = args.local_tank_cache
-
     from shark.shark_downloader import download_model
 
     if "cuda" in args.device:
@@ -299,7 +298,8 @@ def set_init_device_flags():
         or args.batch_size != 1
         or ("vulkan" not in args.device and "cuda" not in args.device)
     ):
-        args.use_tuned = False
+       # args.use_tuned = False
+       pass
 
     elif base_model_id not in [
         "Linaqruf/anything-v3.0",
@@ -338,13 +338,25 @@ def set_init_device_flags():
                 "stabilityai/stable-diffusion-2-1",
                 "stabilityai/stable-diffusion-2-1-base",
             ]
-            or "rdna3" not in args.iree_vulkan_target_triple
+            or "rdna" not in args.iree_vulkan_target_triple
         )
     ):
         args.use_tuned = False
 
+    elif "rdna2" in args.iree_vulkan_target_triple and (
+        base_model_id
+        not in [
+            "stabilityai/stable-diffusion-2-1",
+            "stabilityai/stable-diffusion-2-1-base",
+            "CompVis/stable-diffusion-v1-4",
+        ]
+    ):
+        args.use_tuned = False
+
     if args.use_tuned:
-        print(f"Using tuned models for {base_model_id}/fp16/{args.device}.")
+        print(
+            f"Using tuned models for {base_model_id}(fp16) on device {args.device}."
+        )
     else:
         print("Tuned models are currently not supported for this setting.")
 
@@ -694,11 +706,20 @@ def clear_all():
         shutil.rmtree(os.path.join(home, ".local/shark_tank"))
 
 
+def get_generated_imgs_path() -> Path:
+    return Path(
+        args.output_dir if args.output_dir else Path.cwd(), "generated_imgs"
+    )
+
+
+def get_generated_imgs_todays_subdir() -> str:
+    return dt.now().strftime("%Y%m%d")
+
+
 # save output images and the inputs corresponding to it.
 def save_output_img(output_img, img_seed, extra_info={}):
-    output_path = args.output_dir if args.output_dir else Path.cwd()
     generated_imgs_path = Path(
-        output_path, "generated_imgs", dt.now().strftime("%Y%m%d")
+        get_generated_imgs_path(), get_generated_imgs_todays_subdir()
     )
     generated_imgs_path.mkdir(parents=True, exist_ok=True)
     csv_path = Path(generated_imgs_path, "imgs_details.csv")

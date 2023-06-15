@@ -596,6 +596,8 @@ def lora_train(
             encoder_hidden_states,
         )
 
+        print(f"\n\nNOISE PRED: {noise_pred} \n\n")
+
         # Get the target for loss depending on the prediction type
         if noise_scheduler.config.prediction_type == "epsilon":
             target = noise
@@ -605,16 +607,20 @@ def lora_train(
             raise ValueError(
                 f"Unknown prediction type {noise_scheduler.config.prediction_type}"
             )
+        
+        print(f"TARGET: {target}\n\n\n")
+
+        #import pdb; pdb.set_trace()
 
         loss = (
             F.mse_loss(noise_pred, target, reduction="none")
             .mean([1, 2, 3])
             .mean()
         )
-        loss.backward()
+        # loss.backward()
 
-        optimizer.step()
-        optimizer.zero_grad()
+        # optimizer.step()
+        # optimizer.zero_grad()
 
         return loss
     
@@ -742,6 +748,8 @@ def lora_train(
 
         unet.train()
 
+        unet.save_attn_procs(args.lora_save_dir)
+
         # print("\n Before Optimize \n")
         dynamo_callable = dynamo.optimize(
             refbackend_torchdynamo_backend
@@ -752,7 +760,6 @@ def lora_train(
               )
         print("\n After optimize \n")
 
-       # import pdb; pdb.set_trace()
 
         for epoch in range(num_train_epochs):
             for step, batch in enumerate(train_dataloader):
@@ -786,6 +793,8 @@ def lora_train(
             
 
     training_function()
+
+    #import pdb; pdb.set_trace()
 
     # Save the lora weights
     unet.save_attn_procs(args.lora_save_dir)
